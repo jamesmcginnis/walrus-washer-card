@@ -1,6 +1,6 @@
 /**
  * Walrus Washer Card
- * Displays washing machine cycle status, remaining time, and progress as an animated ring.
+ * Displays washing machine cycle status and remaining time as an animated progress ring.
  * For Home Assistant — https://github.com/jamesmcginnis/walrus-washer-card
  */
 
@@ -12,7 +12,9 @@ class WalrusWasherCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
-    this._popupOverlay = null;
+    this._popupOverlay      = null;
+    this._pillFlashState    = null;   // 'on' | 'off' | null
+    this._pillFlashInterval = null;
   }
 
   static getConfigElement() {
@@ -21,17 +23,19 @@ class WalrusWasherCard extends HTMLElement {
 
   static getStubConfig() {
     return {
-      machine_entity:     '',
-      status_entity:      '',
-      time_entity:        '',
-      friendly_name:      '',
-      show_name:          true,
-      max_cycle_minutes:  90,
-      card_bg:            '#1c1c1e',
-      card_bg_opacity:    80,
-      text_color:         '#ffffff',
-      ring_color:         '#007AFF',
-      time_text_color:    '#ffffff',
+      machine_entity:      '',
+      status_entity:       '',
+      time_entity:         '',
+      friendly_name:       '',
+      show_name:           true,
+      max_cycle_minutes:   90,
+      smart_plug_enabled:  false,
+      smart_plug_entity:   '',
+      card_bg:             '#1c1c1e',
+      card_bg_opacity:     80,
+      text_color:          '#ffffff',
+      ring_color:          '#007AFF',
+      time_text_color:     '#ffffff',
     };
   }
 
@@ -47,14 +51,14 @@ class WalrusWasherCard extends HTMLElement {
   }
 
   connectedCallback() {}
-  disconnectedCallback() {}
+  disconnectedCallback() { this._stopPillFlash(); }
 
   // ── Render ─────────────────────────────────────────────────────────
 
   _render() {
     if (!this._config) return;
     const cfg  = this._config;
-    const circ = 2 * Math.PI * 54;
+    const circ = 2 * Math.PI * 46;
 
     const hexBg = cfg.card_bg || '#1c1c1e';
     let r = 28, g = 28, b = 30, op = (parseInt(cfg.card_bg_opacity) || 80) / 100;
@@ -65,8 +69,8 @@ class WalrusWasherCard extends HTMLElement {
       if (/^#[0-9a-fA-F]{8}$/.test(hexBg)) op = parseInt(hexBg.slice(7,9),16) / 255;
     } catch(e) {}
     const bgCss    = `rgba(${r},${g},${b},${op.toFixed(3)})`;
-    const tc       = cfg.text_color  || '#ffffff';
-    const ringCol  = cfg.ring_color  || '#007AFF';
+    const tc       = cfg.text_color || '#ffffff';
+    const ringCol  = cfg.ring_color || '#007AFF';
     const showName = cfg.show_name !== false;
 
     this.shadowRoot.innerHTML = `
@@ -86,14 +90,14 @@ class WalrusWasherCard extends HTMLElement {
           font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
         }
 
-        .ww-inner { padding: 14px 16px 22px; }
+        .ww-inner { padding: 14px 16px 18px; }
 
         /* ── Header ──────────────────────────────────── */
         .ww-header {
           display: flex;
           align-items: center;
           justify-content: ${showName ? 'space-between' : 'flex-end'};
-          margin-bottom: 20px;
+          margin-bottom: 16px;
           gap: 8px;
           min-height: 28px;
         }
@@ -131,12 +135,13 @@ class WalrusWasherCard extends HTMLElement {
 
         /* ── Ring area ───────────────────────────────── */
         .ww-ring-area {
-          display: flex; flex-direction: column;
-          align-items: center; gap: 14px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
 
         .ww-ring-wrap {
-          position: relative; width: 140px; height: 140px;
+          position: relative; width: 118px; height: 118px;
           cursor: pointer; -webkit-tap-highlight-color: transparent;
         }
         .ww-ring-wrap svg { display: block; }
@@ -145,35 +150,25 @@ class WalrusWasherCard extends HTMLElement {
           position: absolute; inset: 0;
           display: flex; flex-direction: column;
           align-items: center; justify-content: center;
-          pointer-events: none; gap: 3px;
+          pointer-events: none; gap: 2px;
         }
 
-        /* Washing machine icon (SVG inline) */
         .ww-icon-wrap {
-          width: 28px; height: 28px;
+          width: 24px; height: 24px;
           display: flex; align-items: center; justify-content: center;
-          transition: opacity 0.3s;
         }
-        .ww-icon-wrap svg { width: 28px; height: 28px; }
+        .ww-icon-wrap svg { width: 24px; height: 24px; }
 
         .ww-time-val {
-          font-size: 24px; font-weight: 700;
+          font-size: 22px; font-weight: 700;
           letter-spacing: -0.5px; line-height: 1;
           color: ${cfg.time_text_color || '#ffffff'};
           transition: color 0.4s;
         }
         .ww-time-unit {
-          font-size: 10px; font-weight: 500;
+          font-size: 9px; font-weight: 500;
           color: rgba(255,255,255,0.32); line-height: 1;
           letter-spacing: 0.03em;
-        }
-
-        /* ── Cycle label below ring ───────────────────── */
-        .ww-cycle-label {
-          font-size: 12px; font-weight: 600;
-          color: rgba(255,255,255,0.50);
-          letter-spacing: 0.02em; text-align: center;
-          min-height: 16px; transition: color 0.4s;
         }
 
         /* ── Animations ──────────────────────────────── */
@@ -186,14 +181,14 @@ class WalrusWasherCard extends HTMLElement {
           50%      { filter: drop-shadow(0 0 9px ${ringCol}); }
         }
         @keyframes wwDrumRock {
-          0%,100% { transform: rotate(-12deg) scale(1);   }
-          25%     { transform: rotate( 0deg)  scale(1.05);}
-          50%     { transform: rotate( 12deg) scale(1);   }
-          75%     { transform: rotate( 0deg)  scale(1.05);}
+          0%,100% { transform: rotate(-12deg) scale(1);    }
+          25%      { transform: rotate(  0deg) scale(1.05); }
+          50%      { transform: rotate( 12deg) scale(1);    }
+          75%      { transform: rotate(  0deg) scale(1.05); }
         }
         @keyframes wwDonePulse {
-          0%,100% { transform: scale(1);   opacity: 1; }
-          50%     { transform: scale(1.12); opacity: 0.85; }
+          0%,100% { transform: scale(1);    opacity: 1;    }
+          50%      { transform: scale(1.12); opacity: 0.85; }
         }
 
         .ww-ring-wrap.is-active .ww-arc-track {
@@ -223,59 +218,48 @@ class WalrusWasherCard extends HTMLElement {
           <!-- Ring -->
           <div class="ww-ring-area">
             <div class="ww-ring-wrap" id="ww-ring-wrap">
-              <svg viewBox="0 0 140 140" width="140" height="140">
-                <!-- Track -->
-                <circle cx="70" cy="70" r="54"
-                  fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="7"/>
-                <!-- Progress arc -->
+              <svg viewBox="0 0 118 118" width="118" height="118">
+                <circle cx="59" cy="59" r="46"
+                  fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="6.5"/>
                 <circle id="ww-arc" class="ww-arc-track"
-                  cx="70" cy="70" r="54"
+                  cx="59" cy="59" r="46"
                   fill="none"
                   stroke="${ringCol}"
-                  stroke-width="7"
+                  stroke-width="6.5"
                   stroke-linecap="round"
                   style="stroke-dasharray:${circ.toFixed(2)};
                          stroke-dashoffset:${circ.toFixed(2)};
                          transform:rotate(-90deg);
-                         transform-origin:70px 70px;
+                         transform-origin:59px 59px;
                          transition:stroke-dashoffset 1.2s cubic-bezier(0.34,1,0.64,1),
                                     stroke 0.4s ease;"/>
               </svg>
               <div class="ww-ring-center">
-                <!-- Washing machine icon -->
                 <div class="ww-icon-wrap" id="ww-icon-wrap">
-                  <svg id="ww-machine-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <!-- Body -->
-                    <rect x="2" y="3" width="24" height="22" rx="3" fill="none"
-                      stroke="rgba(255,255,255,0.70)" stroke-width="1.6"/>
-                    <!-- Control panel line -->
-                    <line x1="2" y1="9" x2="26" y2="9"
-                      stroke="rgba(255,255,255,0.35)" stroke-width="1.2"/>
-                    <!-- Buttons -->
-                    <circle cx="7"  cy="6" r="1.2" fill="rgba(255,255,255,0.50)"/>
-                    <circle cx="11" cy="6" r="1.2" fill="rgba(255,255,255,0.30)"/>
-                    <!-- Door circle outer -->
-                    <circle cx="14" cy="18" r="6.5"
-                      stroke="rgba(255,255,255,0.55)" stroke-width="1.4" fill="none"/>
-                    <!-- Door glass inner -->
-                    <circle id="ww-drum-inner" cx="14" cy="18" r="4.2"
-                      stroke="rgba(255,255,255,0.22)" stroke-width="1" fill="rgba(255,255,255,0.04)"/>
-                    <!-- Drum paddles (rotate when active) -->
-                    <g id="ww-drum-paddles" style="transform-origin:14px 18px;">
-                      <line x1="14" y1="14.2" x2="14" y2="21.8"
-                        stroke="rgba(255,255,255,0.35)" stroke-width="1" stroke-linecap="round"/>
-                      <line x1="10.2" y1="18" x2="17.8" y2="18"
-                        stroke="rgba(255,255,255,0.35)" stroke-width="1" stroke-linecap="round"/>
+                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="1.5" y="2" width="21" height="20" rx="2.5"
+                      fill="none" stroke="rgba(255,255,255,0.70)" stroke-width="1.5"/>
+                    <line x1="1.5" y1="7.5" x2="22.5" y2="7.5"
+                      stroke="rgba(255,255,255,0.30)" stroke-width="1.1"/>
+                    <circle cx="5.5"  cy="4.75" r="1.1" fill="rgba(255,255,255,0.55)"/>
+                    <circle cx="9"    cy="4.75" r="1.1" fill="rgba(255,255,255,0.28)"/>
+                    <circle cx="12" cy="15" r="5.5"
+                      stroke="rgba(255,255,255,0.50)" stroke-width="1.3" fill="none"/>
+                    <circle cx="12" cy="15" r="3.4"
+                      stroke="rgba(255,255,255,0.18)" stroke-width="0.9"
+                      fill="rgba(255,255,255,0.04)"/>
+                    <g id="ww-drum-paddles" style="transform-origin:12px 15px;">
+                      <line x1="12" y1="12.2" x2="12" y2="17.8"
+                        stroke="rgba(255,255,255,0.32)" stroke-width="0.9" stroke-linecap="round"/>
+                      <line x1="9.2" y1="15" x2="14.8" y2="15"
+                        stroke="rgba(255,255,255,0.32)" stroke-width="0.9" stroke-linecap="round"/>
                     </g>
                   </svg>
                 </div>
                 <span class="ww-time-val" id="ww-time">--</span>
-                <span class="ww-time-unit" id="ww-time-unit">remaining</span>
+                <span class="ww-time-unit" id="ww-time-unit"></span>
               </div>
             </div>
-
-            <!-- Status label -->
-            <div class="ww-cycle-label" id="ww-cycle-label">--</div>
           </div>
 
         </div>
@@ -292,67 +276,72 @@ class WalrusWasherCard extends HTMLElement {
     const cfg  = this._config;
     const hass = this._hass;
     const root = this.shadowRoot;
-    const circ = 2 * Math.PI * 54;
+    const circ = 2 * Math.PI * 46;
 
     const machineStateObj = cfg.machine_entity ? hass.states[cfg.machine_entity] : null;
     const statusStateObj  = cfg.status_entity  ? hass.states[cfg.status_entity]  : null;
     const timeStateObj    = cfg.time_entity    ? hass.states[cfg.time_entity]    : null;
 
-    // Resolve status — prefer dedicated status entity, fall back to machine entity
     const statusRaw  = statusStateObj?.state || machineStateObj?.state || '';
     const statusInfo = this._getStatusInfo(statusRaw);
     const active     = this._isActive(statusRaw);
     const isDone     = this._isDone(statusRaw);
 
-    // Remaining time (minutes)
+    // Remaining time
     let remainMins = null;
     if (timeStateObj) {
       const n = parseFloat(timeStateObj.state);
       if (!isNaN(n)) remainMins = Math.max(0, n);
     }
 
-    // Progress arc offset
-    const maxMins  = parseFloat(cfg.max_cycle_minutes) || 90;
-    let arcOffset  = circ; // default: empty
+    // Arc offset
+    const maxMins = parseFloat(cfg.max_cycle_minutes) || 90;
+    let arcOffset = circ;
     if (isDone) {
-      arcOffset = 0;                                            // full ring when done
+      arcOffset = 0;
     } else if (active && remainMins !== null) {
       const elapsed = Math.max(0, maxMins - remainMins);
-      arcOffset = circ * (1 - Math.min(1, elapsed / maxMins)); // fill as time elapses
+      arcOffset = circ * (1 - Math.min(1, elapsed / maxMins));
     } else if (active) {
-      arcOffset = circ * 0.25;                                  // partial fill if no time data
+      arcOffset = circ * 0.25;
     }
 
-    // ── Status pill ──
-    const pillTextEl = root.getElementById('ww-pill-text');
-    const dotEl      = root.getElementById('ww-dot');
-    const pillEl     = root.getElementById('ww-pill');
-    if (pillTextEl) pillTextEl.textContent  = statusInfo.label;
-    if (dotEl)      dotEl.style.background  = statusInfo.dotColor;
-    if (pillEl)     pillEl.style.borderColor = `${statusInfo.color}66`;
+    // Stop flash when expected state is reached
+    if (this._pillFlashState === 'on'  && active)              this._stopPillFlash();
+    if (this._pillFlashState === 'off' && !active && !isDone)  this._stopPillFlash();
 
-    // ── Arc ──
+    // Status pill — only when not flashing
+    if (!this._pillFlashState) {
+      const pillTextEl = root.getElementById('ww-pill-text');
+      const dotEl      = root.getElementById('ww-dot');
+      const pillEl     = root.getElementById('ww-pill');
+      if (pillTextEl) pillTextEl.textContent   = statusInfo.label;
+      if (dotEl)      dotEl.style.background   = statusInfo.dotColor;
+      if (pillEl)     pillEl.style.borderColor = `${statusInfo.color}66`;
+    }
+
+    // Arc
     const arcEl = root.getElementById('ww-arc');
     if (arcEl) {
       arcEl.style.stroke           = statusInfo.color;
       arcEl.style.strokeDashoffset = arcOffset.toFixed(2);
     }
 
-    // ── Ring wrap state classes ──
+    // Ring state classes
     const wrapEl = root.getElementById('ww-ring-wrap');
     if (wrapEl) {
       wrapEl.classList.toggle('is-active', active && !isDone);
       wrapEl.classList.toggle('is-done',   isDone);
     }
 
-    // ── Drum paddles rotation (CSS animation handles rocking; rotate for "done") ──
+    // Drum paddles
     const paddlesEl = root.getElementById('ww-drum-paddles');
     if (paddlesEl) {
       paddlesEl.style.transition = 'transform 0.8s ease';
       paddlesEl.style.transform  = isDone ? 'rotate(45deg)' : '';
     }
 
-    // ── Time display ──
+    // Time display
     const timeEl     = root.getElementById('ww-time');
     const timeUnitEl = root.getElementById('ww-time-unit');
     if (timeEl) {
@@ -368,29 +357,7 @@ class WalrusWasherCard extends HTMLElement {
       }
     }
 
-    // ── Cycle label ──
-    const labelEl = root.getElementById('ww-cycle-label');
-    if (labelEl) {
-      if (isDone) {
-        labelEl.textContent  = 'Cycle complete';
-        labelEl.style.color  = '#34C759';
-      } else if (active && remainMins !== null) {
-        const pct = Math.round(Math.min(100, ((maxMins - remainMins) / maxMins) * 100));
-        labelEl.textContent  = `${statusInfo.label} · ${pct}% done`;
-        labelEl.style.color  = statusInfo.color;
-      } else if (active) {
-        labelEl.textContent  = statusInfo.label;
-        labelEl.style.color  = statusInfo.color;
-      } else if (statusInfo.label === '--') {
-        labelEl.textContent  = 'No data';
-        labelEl.style.color  = 'rgba(255,255,255,0.30)';
-      } else {
-        labelEl.textContent  = statusInfo.label;
-        labelEl.style.color  = 'rgba(255,255,255,0.40)';
-      }
-    }
-
-    // ── Title ──
+    // Title
     const titleEl = root.getElementById('ww-title');
     if (titleEl && cfg.friendly_name) titleEl.textContent = cfg.friendly_name;
   }
@@ -422,7 +389,6 @@ class WalrusWasherCard extends HTMLElement {
     if (['error','fault','fail'].includes(s))
       return { label: 'Error',     color: '#FF3B30', dotColor: '#FF3B30' };
 
-    // Generic — format snake_case nicely
     const fmt = raw.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     return { label: fmt, color: '#007AFF', dotColor: '#007AFF' };
   }
@@ -436,6 +402,16 @@ class WalrusWasherCard extends HTMLElement {
   _isDone(raw) {
     const s = (raw || '').toLowerCase().trim();
     return ['done','finished','complete','end','ended'].includes(s);
+  }
+
+  _isOffline(raw) {
+    const s = (raw || '').toLowerCase().trim();
+    return ['unavailable','unknown','offline',''].includes(s);
+  }
+
+  _isIdle(raw) {
+    const s = (raw || '').toLowerCase().trim();
+    return ['idle','standby','off','ready'].includes(s);
   }
 
   _formatTime(minutes) {
@@ -454,8 +430,8 @@ class WalrusWasherCard extends HTMLElement {
     if (mins < 1)    return 'Just now';
     if (mins === 1)  return '1 min ago';
     if (mins < 60)   return `${mins} mins ago`;
-    if (mins < 1440) return `${Math.floor(mins/60)}h ago`;
-    return `${Math.floor(mins/1440)}d ago`;
+    if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+    return `${Math.floor(mins / 1440)}d ago`;
   }
 
   // ── Interactions ───────────────────────────────────────────────────
@@ -466,12 +442,40 @@ class WalrusWasherCard extends HTMLElement {
     const ring    = root.getElementById('ww-ring-wrap');
     const titleEl = root.getElementById('ww-title');
 
-    if (pill)    pill.addEventListener('click',  () => this._openStatusPopup());
-    if (ring)    ring.addEventListener('click',  () => this._openStatusPopup());
+    if (pill)    pill.addEventListener('click',    () => this._handlePillClick());
+    if (ring)    ring.addEventListener('click',    () => this._openStatusPopup());
     if (titleEl) titleEl.addEventListener('click', () => {
       const id = this._config?.machine_entity || this._config?.status_entity;
       if (id) this._fireMoreInfo(id);
     });
+  }
+
+  _handlePillClick() {
+    const cfg     = this._config;
+    const hass    = this._hass;
+    const plugId  = cfg.smart_plug_entity;
+    const enabled = cfg.smart_plug_enabled;
+
+    if (!enabled || !plugId) {
+      this._openStatusPopup();
+      return;
+    }
+
+    const statusStateObj  = cfg.status_entity  ? hass?.states[cfg.status_entity]  : null;
+    const machineStateObj = cfg.machine_entity  ? hass?.states[cfg.machine_entity] : null;
+    const statusRaw       = statusStateObj?.state || machineStateObj?.state || '';
+
+    if (this._isOffline(statusRaw)) {
+      // Machine is off — power it on immediately
+      hass.callService('homeassistant', 'turn_on', { entity_id: plugId });
+      this._startPillFlash('on');
+    } else if (this._isIdle(statusRaw) || this._isDone(statusRaw)) {
+      // Machine is idle or done — ask before cutting power
+      this._openConfirmOffPopup();
+    } else {
+      // Mid-cycle — show info popup only
+      this._openStatusPopup();
+    }
   }
 
   _fireMoreInfo(entityId) {
@@ -481,7 +485,51 @@ class WalrusWasherCard extends HTMLElement {
     }));
   }
 
-  // ── Popup ──────────────────────────────────────────────────────────
+  // ── Pill flash ─────────────────────────────────────────────────────
+
+  _startPillFlash(mode) {
+    this._stopPillFlash();
+    this._pillFlashState = mode;
+
+    const root   = this.shadowRoot;
+    const textEl = root.getElementById('ww-pill-text');
+    const dotEl  = root.getElementById('ww-dot');
+    const pillEl = root.getElementById('ww-pill');
+    if (!textEl || !dotEl || !pillEl) return;
+
+    const LABEL  = mode === 'on' ? 'Turning On' : 'Turning Off';
+    const YELLOW = '#FF9500';
+    let flash    = true;
+
+    const apply = () => {
+      if (!this._pillFlashState) return;
+      textEl.textContent       = LABEL;
+      dotEl.style.background   = flash ? YELLOW : 'rgba(255,255,255,0.15)';
+      pillEl.style.borderColor = flash ? `${YELLOW}88` : 'rgba(255,255,255,0.08)';
+      pillEl.style.color       = flash ? YELLOW : 'rgba(255,255,255,0.30)';
+      flash = !flash;
+    };
+
+    apply();
+    this._pillFlashInterval = setInterval(apply, 600);
+  }
+
+  _stopPillFlash() {
+    if (this._pillFlashInterval) {
+      clearInterval(this._pillFlashInterval);
+      this._pillFlashInterval = null;
+    }
+    this._pillFlashState = null;
+
+    const root   = this.shadowRoot;
+    const pillEl = root.getElementById('ww-pill');
+    if (pillEl) {
+      pillEl.style.color       = '';
+      pillEl.style.borderColor = '';
+    }
+  }
+
+  // ── Popups ─────────────────────────────────────────────────────────
 
   _closePopup() {
     if (!this._popupOverlay) return;
@@ -526,6 +574,13 @@ class WalrusWasherCard extends HTMLElement {
       .ww-info-value { font-size:12px;font-weight:600;color:rgba(255,255,255,0.88);text-align:right;word-break:break-all; }
       .ww-close-btn:hover  { background:rgba(255,255,255,0.22)!important; }
       .ww-close-btn:active { background:rgba(255,255,255,0.28)!important; }
+      .ww-btn { border:none;border-radius:14px;padding:11px 20px;font-size:14px;font-weight:600;
+                cursor:pointer;font-family:inherit;transition:opacity 0.15s,transform 0.1s;letter-spacing:0.01em; }
+      .ww-btn:active { transform:scale(0.97); }
+      .ww-btn-cancel  { background:rgba(255,255,255,0.10);color:rgba(255,255,255,0.70); }
+      .ww-btn-cancel:hover { background:rgba(255,255,255,0.16); }
+      .ww-btn-confirm { background:#FF3B30;color:#ffffff; }
+      .ww-btn-confirm:hover { opacity:0.88; }
     `;
     overlay.appendChild(style);
     overlay.addEventListener('click', e => { if (e.target === overlay) this._closePopup(); });
@@ -567,31 +622,81 @@ class WalrusWasherCard extends HTMLElement {
     parent.appendChild(row);
   }
 
+  // ── Confirmation popup (turn off) ──────────────────────────────────
+
+  _openConfirmOffPopup() {
+    const cfg  = this._config;
+    const name = cfg.friendly_name || 'your washing machine';
+
+    const popup = this._createPopupBase('Turn Off');
+    if (!popup) return;
+
+    const body = document.createElement('div');
+    body.style.cssText = 'text-align:center;padding:8px 0 20px;';
+    body.innerHTML = `
+      <div style="font-size:48px;line-height:1;margin-bottom:14px;">🫧</div>
+      <div style="font-size:18px;font-weight:700;color:rgba(255,255,255,0.92);margin-bottom:10px;line-height:1.3;">
+        All done with the laundry?
+      </div>
+      <div style="font-size:14px;color:rgba(255,255,255,0.50);line-height:1.55;max-width:280px;margin:0 auto;">
+        Just checking — do you want to turn off
+        <strong style="color:rgba(255,255,255,0.75);">${name}</strong> now?
+      </div>`;
+    popup.appendChild(body);
+
+    const btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;gap:10px;';
+
+    const cancelBtn  = document.createElement('button');
+    cancelBtn.className   = 'ww-btn ww-btn-cancel';
+    cancelBtn.textContent = 'Not yet';
+    cancelBtn.style.flex  = '1';
+    cancelBtn.addEventListener('click', () => this._closePopup());
+
+    const confirmBtn  = document.createElement('button');
+    confirmBtn.className   = 'ww-btn ww-btn-confirm';
+    confirmBtn.textContent = 'Turn Off';
+    confirmBtn.style.flex  = '1';
+    confirmBtn.addEventListener('click', () => {
+      this._closePopup();
+      const plugId = cfg.smart_plug_entity;
+      if (plugId && this._hass) {
+        this._hass.callService('homeassistant', 'turn_off', { entity_id: plugId });
+        this._startPillFlash('off');
+      }
+    });
+
+    btns.appendChild(cancelBtn);
+    btns.appendChild(confirmBtn);
+    popup.appendChild(btns);
+  }
+
+  // ── Status info popup ──────────────────────────────────────────────
+
   _openStatusPopup() {
     const cfg  = this._config;
     const hass = this._hass;
     const name = cfg.friendly_name || 'Washing Machine';
 
     const statusStateObj  = cfg.status_entity  ? hass?.states[cfg.status_entity]  : null;
-    const machineStateObj = cfg.machine_entity ? hass?.states[cfg.machine_entity] : null;
-    const timeStateObj    = cfg.time_entity    ? hass?.states[cfg.time_entity]    : null;
+    const machineStateObj = cfg.machine_entity  ? hass?.states[cfg.machine_entity] : null;
+    const timeStateObj    = cfg.time_entity     ? hass?.states[cfg.time_entity]    : null;
     const statusRaw       = statusStateObj?.state || machineStateObj?.state || '';
     const statusInfo      = this._getStatusInfo(statusRaw);
 
     const popup = this._createPopupBase(name);
     if (!popup) return;
 
-    // Hero
-    const circ      = 2 * Math.PI * 34;
-    const maxMins   = parseFloat(cfg.max_cycle_minutes) || 90;
-    let remainMins  = null;
+    const circ     = 2 * Math.PI * 34;
+    const maxMins  = parseFloat(cfg.max_cycle_minutes) || 90;
+    let remainMins = null;
     if (timeStateObj) {
       const n = parseFloat(timeStateObj.state);
       if (!isNaN(n)) remainMins = Math.max(0, n);
     }
-    const isDone    = this._isDone(statusRaw);
-    const active    = this._isActive(statusRaw);
-    let arcOffset   = circ;
+    const isDone  = this._isDone(statusRaw);
+    const active  = this._isActive(statusRaw);
+    let arcOffset = circ;
     if (isDone) {
       arcOffset = 0;
     } else if (active && remainMins !== null) {
@@ -625,7 +730,6 @@ class WalrusWasherCard extends HTMLElement {
     table.style.cssText = 'border-top:1px solid rgba(255,255,255,0.08);padding-top:4px;';
     popup.appendChild(table);
 
-    // Machine entity rows
     const primaryObj = statusStateObj || machineStateObj;
     if (primaryObj) {
       const attrs = primaryObj.attributes || {};
@@ -636,12 +740,11 @@ class WalrusWasherCard extends HTMLElement {
       const unit = timeStateObj.attributes?.unit_of_measurement || 'min';
       this._addInfoRow(table, 'Remaining', `${timeStateObj.state} ${unit}`);
     }
-    if (cfg.max_cycle_minutes) {
-      this._addInfoRow(table, 'Max Cycle', `${cfg.max_cycle_minutes} min`);
-    }
-    if (cfg.machine_entity)  this._addInfoRow(table, 'Machine Entity', cfg.machine_entity);
-    if (cfg.status_entity)   this._addInfoRow(table, 'Status Entity',  cfg.status_entity);
-    if (cfg.time_entity)     this._addInfoRow(table, 'Time Entity',    cfg.time_entity);
+    if (cfg.max_cycle_minutes) this._addInfoRow(table, 'Max Cycle',     `${cfg.max_cycle_minutes} min`);
+    if (cfg.machine_entity)    this._addInfoRow(table, 'Machine Entity', cfg.machine_entity);
+    if (cfg.status_entity)     this._addInfoRow(table, 'Status Entity',  cfg.status_entity);
+    if (cfg.time_entity)       this._addInfoRow(table, 'Time Entity',    cfg.time_entity);
+    if (cfg.smart_plug_entity) this._addInfoRow(table, 'Smart Plug',     cfg.smart_plug_entity);
 
     if (primaryObj) {
       this._addInfoRow(table, 'Last Changed', this._timeAgo(primaryObj.last_changed));
@@ -708,13 +811,18 @@ class WalrusWasherCardEditor extends HTMLElement {
     setVal('friendly_name',     cfg.friendly_name     || '');
     setVal('max_cycle_minutes', cfg.max_cycle_minutes ?? 90);
     setVal('card_bg_opacity',   cfg.card_bg_opacity   ?? 80);
-    setChk('show_name',         cfg.show_name !== false);
-
-    const opLabel = root.getElementById('opacity-val');
-    if (opLabel) opLabel.textContent = `${cfg.card_bg_opacity ?? 80}%`;
+    setVal('smart_plug_entity', cfg.smart_plug_entity || '');
+    setChk('show_name',          cfg.show_name !== false);
+    setChk('smart_plug_enabled', cfg.smart_plug_enabled === true);
 
     const nameRow = root.getElementById('friendly_name_row');
     if (nameRow) nameRow.style.display = cfg.show_name !== false ? '' : 'none';
+
+    const plugRow = root.getElementById('smart_plug_entity_row');
+    if (plugRow) plugRow.style.display = cfg.smart_plug_enabled ? '' : 'none';
+
+    const opLabel = root.getElementById('opacity-val');
+    if (opLabel) opLabel.textContent = `${cfg.card_bg_opacity ?? 80}%`;
 
     for (const field of this._getColourFields()) {
       const card = root.querySelector(`.colour-card[data-key="${field.key}"]`);
@@ -733,10 +841,10 @@ class WalrusWasherCardEditor extends HTMLElement {
 
   _getColourFields() {
     return [
-      { key: 'ring_color',       label: 'Ring / Arc',       desc: 'Progress ring colour (base; overridden by cycle status)',  default: '#007AFF', maxlen: 7 },
-      { key: 'time_text_color',  label: 'Time Text',        desc: 'Remaining time number in ring centre',                     default: '#ffffff', maxlen: 7 },
-      { key: 'card_bg',          label: 'Card Background',  desc: '#00000000 = glass · 8-digit hex sets opacity e.g. #1c1c1e80', default: '#1c1c1e', maxlen: 9 },
-      { key: 'text_color',       label: 'Text',             desc: 'Primary text colour',                                      default: '#ffffff', maxlen: 7 },
+      { key: 'ring_color',      label: 'Ring / Arc',      desc: 'Base progress ring colour (each cycle phase overrides this)',  default: '#007AFF', maxlen: 7 },
+      { key: 'time_text_color', label: 'Time Text',       desc: 'Remaining time number shown inside the ring',                  default: '#ffffff', maxlen: 7 },
+      { key: 'card_bg',         label: 'Card Background', desc: '#00000000 = glass · 8-digit hex sets opacity e.g. #1c1c1e80', default: '#1c1c1e', maxlen: 9 },
+      { key: 'text_color',      label: 'Text',            desc: 'Primary text colour',                                         default: '#ffffff', maxlen: 7 },
     ];
   }
 
@@ -744,10 +852,9 @@ class WalrusWasherCardEditor extends HTMLElement {
     const hass = this._hass;
     const cfg  = this._config;
 
-    // ── Entity auto-detection ───────────────────────────────────────
-
     const allEntities = Object.keys(hass.states).sort();
     const allSensors  = allEntities.filter(e => e.startsWith('sensor.'));
+    const allSwitches = allEntities.filter(e => e.startsWith('switch.') || e.startsWith('input_boolean.'));
     const getName     = e => hass.states[e]?.attributes?.friendly_name || e;
 
     const scoreEntity = (id, friendlyName, keywords) => {
@@ -756,23 +863,37 @@ class WalrusWasherCardEditor extends HTMLElement {
       return keywords.reduce((s, k) => s + (id2.includes(k) || name2.includes(k) ? 1 : 0), 0);
     };
 
-    // Keyword sets
     const washKws    = ['wash','washer','washing','laundry','laundrie'];
     const machineKws = [...washKws, 'machine','appliance'];
     const statusKws  = [...washKws, 'cycle','status','state','program','programme','phase'];
     const timeKws    = [...washKws, 'remaining','time','duration','countdown','minutes','min'];
+    const plugKws    = ['plug','socket','outlet','switch','power','tasmota','shelly','tp_link',
+                        'kasa','sonoff','wemo','hue_plug','ikea_outlet','smart_plug'];
 
-    // Score all sensors/entities and pick best candidates
-    const scoredAll = (pool, kws) =>
+    const scored = (pool, kws) =>
       pool
         .map(e => ({ e, score: scoreEntity(e, getName(e), kws) }))
         .sort((a, b) => b.score - a.score || a.e.localeCompare(b.e));
 
-    const machineCandidates = scoredAll(allEntities, machineKws);
-    const statusCandidates  = scoredAll(allSensors,  statusKws);
-    const timeCandidates    = scoredAll(allSensors,  timeKws);
+    const machineCandidates = scored(allEntities, machineKws);
+    const statusCandidates  = scored(allSensors,  statusKws);
+    const timeCandidates    = scored(allSensors,  timeKws);
 
-    // Auto-select entities that haven't been set yet
+    const machineName = (cfg.machine_entity
+      ? (hass.states[cfg.machine_entity]?.attributes?.friendly_name || cfg.machine_entity)
+      : '').toLowerCase();
+    const plugCandidates = allSwitches.map(e => {
+      const id2   = e.toLowerCase();
+      const name2 = getName(e).toLowerCase();
+      let score   = plugKws.reduce((s, k) => s + (id2.includes(k) || name2.includes(k) ? 1 : 0), 0);
+      if (machineName) {
+        machineName.split(/\W+/).filter(w => w.length > 3).forEach(w => {
+          if (id2.includes(w) || name2.includes(w)) score += 2;
+        });
+      }
+      return { e, score };
+    }).sort((a, b) => b.score - a.score || a.e.localeCompare(b.e));
+
     const autoSelect = (cfgKey, candidates) => {
       if (!cfg[cfgKey]) {
         const best = candidates.find(x => x.score > 0);
@@ -785,8 +906,8 @@ class WalrusWasherCardEditor extends HTMLElement {
     autoSelect('machine_entity', machineCandidates);
     autoSelect('status_entity',  statusCandidates);
     autoSelect('time_entity',    timeCandidates);
+    // Smart plug: never auto-selected
 
-    // Build <option> HTML — suggested (★) first, then rest
     const buildOptions = (candidates, pool, selectedVal) => {
       const candSet   = new Set(candidates.map(c => c.e));
       const suggested = candidates.map(({ e, score }) =>
@@ -799,13 +920,13 @@ class WalrusWasherCardEditor extends HTMLElement {
       return `<option value="">— None —</option>${suggested}${divider}${rest}`;
     };
 
-    const machineOpts = buildOptions(machineCandidates, allEntities, cfg.machine_entity || '');
-    const statusOpts  = buildOptions(statusCandidates,  allSensors,  cfg.status_entity  || '');
-    const timeOpts    = buildOptions(timeCandidates,    allSensors,  cfg.time_entity    || '');
+    const machineOpts = buildOptions(machineCandidates, allEntities, cfg.machine_entity   || '');
+    const statusOpts  = buildOptions(statusCandidates,  allSensors,  cfg.status_entity    || '');
+    const timeOpts    = buildOptions(timeCandidates,    allSensors,  cfg.time_entity      || '');
+    const plugOpts    = buildOptions(plugCandidates,    allSwitches, cfg.smart_plug_entity || '');
 
     const COLOUR_FIELDS = this._getColourFields();
 
-    // ── Build HTML ──────────────────────────────────────────────────
     this.shadowRoot.innerHTML = `
       <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -817,26 +938,18 @@ class WalrusWasherCardEditor extends HTMLElement {
           font-size: 11px; font-weight: 700; text-transform: uppercase;
           letter-spacing: 0.08em; color: #888; margin-bottom: 4px;
         }
-
         .card-block {
           background: var(--card-background-color, #1c1c1e);
           border: 1px solid rgba(128,128,128,0.18);
           border-radius: 12px; overflow: hidden;
         }
-
         .select-row {
           padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;
           border-bottom: 1px solid rgba(128,128,128,0.12);
         }
         .select-row:last-child { border-bottom: none; }
-
-        .select-row label {
-          font-size: 12px; font-weight: 600;
-          color: var(--primary-text-color, #e5e5e7);
-        }
-        .select-row .hint {
-          font-size: 10px; color: #888; line-height: 1.4;
-        }
+        .select-row label { font-size: 12px; font-weight: 600; color: var(--primary-text-color, #e5e5e7); }
+        .select-row .hint { font-size: 10px; color: #888; line-height: 1.4; }
 
         select, input[type=text], input[type=number] {
           width: 100%; padding: 7px 10px;
@@ -847,18 +960,12 @@ class WalrusWasherCardEditor extends HTMLElement {
           font-size: 13px; font-family: inherit;
           outline: none; appearance: none;
         }
-        select:focus, input:focus {
-          border-color: #007AFF; background: rgba(0,122,255,0.08);
-        }
+        select:focus, input:focus { border-color: #007AFF; background: rgba(0,122,255,0.08); }
         select option { background: #1c1c1e; color: #e5e5e7; }
+        .entity-search { font-size: 12px !important; padding: 5px 10px !important; }
 
-        .entity-search {
-          font-size: 12px !important; padding: 5px 10px !important;
-        }
-
-        /* Toggles */
-        .toggle-list  { padding: 4px 0; }
-        .toggle-item  {
+        .toggle-list { padding: 4px 0; }
+        .toggle-item {
           display: flex; align-items: center; justify-content: space-between;
           padding: 10px 12px; gap: 12px;
           border-bottom: 1px solid rgba(128,128,128,0.10);
@@ -880,28 +987,23 @@ class WalrusWasherCardEditor extends HTMLElement {
           left: 3px; top: 3px; transition: transform 0.25s;
           box-shadow: 0 1px 4px rgba(0,0,0,0.35);
         }
-        .toggle-switch input:checked + .toggle-slider             { background: #007AFF; }
-        .toggle-switch input:checked + .toggle-slider::before     { transform: translateX(18px); }
+        .toggle-switch input:checked + .toggle-slider           { background: #007AFF; }
+        .toggle-switch input:checked + .toggle-slider::before   { transform: translateX(18px); }
 
         .input-row { padding: 4px 12px 10px; }
         .input-row input { margin-top: 4px; }
 
-        /* Opacity */
-        .opacity-row {
-          display: flex; align-items: center; gap: 10px; padding: 10px 12px;
-        }
+        .opacity-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
         .opacity-row label { font-size: 12px; font-weight: 600; color: var(--primary-text-color, #e5e5e7); flex-shrink: 0; }
         .opacity-row input[type=range] { flex: 1; accent-color: #007AFF; }
         .opacity-val { font-size: 12px; font-weight: 600; color: #007AFF; min-width: 36px; text-align: right; }
 
-        /* Colour cards */
         .colour-card {
           display: flex; align-items: center; gap: 12px;
           padding: 10px 12px;
           border-bottom: 1px solid rgba(128,128,128,0.10);
         }
         .colour-card:last-child { border-bottom: none; }
-
         .colour-swatch { position: relative; cursor: pointer; flex-shrink: 0; }
         .colour-swatch-preview {
           width: 40px; height: 40px; border-radius: 10px;
@@ -912,14 +1014,13 @@ class WalrusWasherCardEditor extends HTMLElement {
           position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%;
           cursor: pointer; padding: 0; border: none; background: none;
         }
-
         .colour-info  { flex: 1; min-width: 0; }
         .colour-label { font-size: 12px; font-weight: 600; color: var(--primary-text-color, #e5e5e7); }
         .colour-desc  { font-size: 10px; color: #777; margin-top: 2px; }
         .colour-hex-row { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
-        .colour-dot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.15); }
-        .colour-hex   { font-size: 11px !important; padding: 3px 7px !important; font-family: 'SF Mono', monospace !important;
-                        width: 90px !important; letter-spacing: 0.04em; }
+        .colour-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.15); }
+        .colour-hex { font-size: 11px !important; padding: 3px 7px !important; font-family: 'SF Mono', monospace !important;
+                      width: 90px !important; letter-spacing: 0.04em; }
         .colour-edit-icon { font-size: 13px; color: #555; cursor: default; }
       </style>
 
@@ -929,31 +1030,52 @@ class WalrusWasherCardEditor extends HTMLElement {
         <div>
           <div class="section-title">Entities</div>
           <div class="card-block">
-
-            <!-- Machine / Power entity -->
             <div class="select-row">
               <label for="machine_entity">Washing Machine Entity</label>
               <input class="entity-search" type="text" id="machine_search" placeholder="Search…">
               <select id="machine_entity">${machineOpts}</select>
-              <span class="hint">★ = auto-detected · any entity domain · used for more-info tap</span>
+              <span class="hint">★ = auto-detected · any domain · used for title tap (More Info)</span>
             </div>
-
-            <!-- Status entity -->
             <div class="select-row">
               <label for="status_entity">Cycle Status Entity</label>
               <input class="entity-search" type="text" id="status_search" placeholder="Search sensors…">
               <select id="status_entity">${statusOpts}</select>
-              <span class="hint">★ = auto-detected · sensor reporting the current cycle phase (Washing, Rinsing, Spinning…)</span>
+              <span class="hint">★ = auto-detected · sensor reporting cycle phase (Washing, Rinsing, Spinning…)</span>
             </div>
-
-            <!-- Time remaining entity -->
             <div class="select-row">
               <label for="time_entity">Remaining Time Entity</label>
               <input class="entity-search" type="text" id="time_search" placeholder="Search sensors…">
               <select id="time_entity">${timeOpts}</select>
-              <span class="hint">★ = auto-detected · sensor reporting time remaining (numeric, in minutes)</span>
+              <span class="hint">★ = auto-detected · sensor reporting minutes remaining (numeric)</span>
             </div>
+          </div>
+        </div>
 
+        <!-- Smart Plug -->
+        <div>
+          <div class="section-title">Smart Plug</div>
+          <div class="card-block">
+            <div class="toggle-list">
+              <div class="toggle-item">
+                <div>
+                  <div class="toggle-label">Enable Smart Plug Control</div>
+                  <div class="toggle-sub">Tap the status pill to power the machine on or off</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="smart_plug_enabled" ${cfg.smart_plug_enabled ? 'checked' : ''}>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+            <div id="smart_plug_entity_row" style="${cfg.smart_plug_enabled ? '' : 'display:none'}">
+              <div class="select-row" style="border-bottom:none;padding-top:0;">
+                <label for="smart_plug_entity">Plug / Switch Entity</label>
+                <input class="entity-search" type="text" id="plug_search" placeholder="Search switches…">
+                <select id="smart_plug_entity">${plugOpts}</select>
+                <span class="hint">★ = likely smart plugs listed first · switches &amp; input booleans only</span>
+                <span class="hint" style="margin-top:2px;">Offline pill → turns plug <strong>on</strong> &nbsp;|&nbsp; Idle pill → asks before turning plug <strong>off</strong></span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -978,7 +1100,7 @@ class WalrusWasherCardEditor extends HTMLElement {
               <div class="toggle-item">
                 <div>
                   <div class="toggle-label">Show Name</div>
-                  <div class="toggle-sub">Display card title above ring</div>
+                  <div class="toggle-sub">Display card title above the ring</div>
                 </div>
                 <label class="toggle-switch">
                   <input type="checkbox" id="show_name" ${cfg.show_name !== false ? 'checked' : ''}>
@@ -987,7 +1109,8 @@ class WalrusWasherCardEditor extends HTMLElement {
               </div>
             </div>
             <div class="input-row" id="friendly_name_row" style="${cfg.show_name !== false ? '' : 'display:none'}">
-              <input type="text" id="friendly_name" placeholder="e.g. Washing Machine" value="${cfg.friendly_name || ''}">
+              <input type="text" id="friendly_name" placeholder="e.g. Washing Machine"
+                value="${cfg.friendly_name || ''}">
             </div>
           </div>
         </div>
@@ -1014,7 +1137,7 @@ class WalrusWasherCardEditor extends HTMLElement {
 
       </div>`;
 
-    // ── Build colour picker cards ───────────────────────────────────
+    // ── Colour picker cards ────────────────────────────────────────
     const grid = this.shadowRoot.getElementById('ww-colour-grid');
     for (const field of COLOUR_FIELDS) {
       const savedVal  = cfg[field.key] || '';
@@ -1070,7 +1193,7 @@ class WalrusWasherCardEditor extends HTMLElement {
 
     this._setupListeners();
 
-    // ── Live search wiring ─────────────────────────────────────────
+    // ── Live search wiring ────────────────────────────────────────
     const root2 = this.shadowRoot;
 
     const wireSearch = (searchId, selectId, allData) => {
@@ -1101,18 +1224,20 @@ class WalrusWasherCardEditor extends HTMLElement {
       return [...suggested, ...rest];
     };
 
-    wireSearch('machine_search', 'machine_entity', makeData(machineCandidates, allEntities));
-    wireSearch('status_search',  'status_entity',  makeData(statusCandidates,  allSensors));
-    wireSearch('time_search',    'time_entity',     makeData(timeCandidates,    allSensors));
+    wireSearch('machine_search', 'machine_entity',   makeData(machineCandidates, allEntities));
+    wireSearch('status_search',  'status_entity',    makeData(statusCandidates,  allSensors));
+    wireSearch('time_search',    'time_entity',       makeData(timeCandidates,    allSensors));
+    wireSearch('plug_search',    'smart_plug_entity', makeData(plugCandidates,    allSwitches));
   }
 
   _setupListeners() {
     const root = this.shadowRoot;
     const get  = id => root.getElementById(id);
 
-    get('machine_entity').onchange = e => this._updateConfig('machine_entity', e.target.value);
-    get('status_entity').onchange  = e => this._updateConfig('status_entity',  e.target.value);
-    get('time_entity').onchange    = e => this._updateConfig('time_entity',    e.target.value);
+    get('machine_entity').onchange    = e => this._updateConfig('machine_entity',    e.target.value);
+    get('status_entity').onchange     = e => this._updateConfig('status_entity',     e.target.value);
+    get('time_entity').onchange       = e => this._updateConfig('time_entity',       e.target.value);
+    get('smart_plug_entity').onchange = e => this._updateConfig('smart_plug_entity', e.target.value);
 
     get('friendly_name').oninput     = e => this._updateConfig('friendly_name',     e.target.value);
     get('max_cycle_minutes').oninput = e => this._updateConfig('max_cycle_minutes', parseInt(e.target.value) || 90);
@@ -1121,6 +1246,12 @@ class WalrusWasherCardEditor extends HTMLElement {
       this._updateConfig('show_name', e.target.checked);
       const nameRow = root.getElementById('friendly_name_row');
       if (nameRow) nameRow.style.display = e.target.checked ? '' : 'none';
+    };
+
+    get('smart_plug_enabled').onchange = e => {
+      this._updateConfig('smart_plug_enabled', e.target.checked);
+      const plugRow = root.getElementById('smart_plug_entity_row');
+      if (plugRow) plugRow.style.display = e.target.checked ? '' : 'none';
     };
 
     get('card_bg_opacity').oninput = e => {
@@ -1147,6 +1278,6 @@ if (!window.customCards.some(c => c.type === 'walrus-washer-card')) {
     type:        'walrus-washer-card',
     name:        'Walrus Washer Card',
     preview:     true,
-    description: 'Displays washing machine cycle status and remaining time with an animated progress ring.',
+    description: 'Washing machine cycle status and remaining time with an animated progress ring.',
   });
 }

@@ -256,32 +256,39 @@ const MACHINE_SVG = `
 // ═══════════════════════════════════════════════════════════════════
 
 function getWashInfo(raw) {
-  if (!raw) return { label: '--',       pillClass: 'ww-pill-idle',    arcColor: 'var(--divider-color)',             dotColor: 'rgba(255,255,255,0.22)', active: false, done: false, offline: false };
+  if (!raw) return { label: '--',      arcColor: 'var(--divider-color)',             dotColor: 'rgba(255,255,255,0.22)', active: false, done: false, offline: false };
   const s = raw.toLowerCase().trim();
+
+  // Numeric state (e.g. "0", "1") — integration returning a code we can't label → Idle
+  if (/^\d+(\.\d+)?$/.test(s))
+    return    { label: 'Idle',      arcColor: 'var(--divider-color)',             dotColor: 'rgba(255,255,255,0.35)', active: false, done: false, offline: false };
+
   if (['unavailable','unknown'].includes(s))
-    return    { label: 'Offline',   pillClass: 'ww-pill-offline',  arcColor: 'var(--error-color,#E24B4A)',       dotColor: '#E24B4A',                active: false, done: false, offline: true  };
-  if (['idle','standby','off','ready'].includes(s))
-    return    { label: 'Idle',      pillClass: 'ww-pill-idle',     arcColor: 'var(--divider-color)',             dotColor: 'rgba(255,255,255,0.35)', active: false, done: false, offline: false };
-  if (['washing','wash'].includes(s))
-    return    { label: 'Washing',   pillClass: 'ww-pill-washing',  arcColor: 'var(--info-color,#378ADD)',        dotColor: '#378ADD',                active: true,  done: false, offline: false };
+    return    { label: 'Offline',   arcColor: 'var(--error-color,#E24B4A)',       dotColor: '#E24B4A',                active: false, done: false, offline: true  };
+  if (['idle','standby','off','ready','no_function','disconnected'].includes(s))
+    return    { label: 'Idle',      arcColor: 'var(--divider-color)',             dotColor: 'rgba(255,255,255,0.35)', active: false, done: false, offline: false };
+  if (['washing','wash','run'].includes(s))
+    return    { label: 'Washing',   arcColor: 'var(--info-color,#378ADD)',        dotColor: '#378ADD',                active: true,  done: false, offline: false };
   if (['rinsing','rinse'].includes(s))
-    return    { label: 'Rinsing',   pillClass: 'ww-pill-rinsing',  arcColor: '#5AC8FA',                         dotColor: '#5AC8FA',                active: true,  done: false, offline: false };
+    return    { label: 'Rinsing',   arcColor: '#5AC8FA',                          dotColor: '#5AC8FA',                active: true,  done: false, offline: false };
   if (s === 'draining')
-    return    { label: 'Draining',  pillClass: 'ww-pill-spin',     arcColor: 'var(--warning-color,#BA7517)',     dotColor: '#FF9500',                active: true,  done: false, offline: false };
+    return    { label: 'Draining',  arcColor: 'var(--warning-color,#BA7517)',     dotColor: '#FF9500',                active: true,  done: false, offline: false };
   if (['spinning','spin'].includes(s))
-    return    { label: 'Spinning',  pillClass: 'ww-pill-spin',     arcColor: 'var(--warning-color,#BA7517)',     dotColor: '#FF9500',                active: true,  done: false, offline: false };
+    return    { label: 'Spinning',  arcColor: 'var(--warning-color,#BA7517)',     dotColor: '#FF9500',                active: true,  done: false, offline: false };
   if (['pre_wash','prewash','pre-wash','soaking','soak'].includes(s))
-    return    { label: 'Pre-wash',  pillClass: 'ww-pill-prewash',  arcColor: '#BF5AF2',                         dotColor: '#BF5AF2',                active: true,  done: false, offline: false };
+    return    { label: 'Pre-wash',  arcColor: '#BF5AF2',                          dotColor: '#BF5AF2',                active: true,  done: false, offline: false };
   if (['heating','heat'].includes(s))
-    return    { label: 'Heating',   pillClass: 'ww-pill-heat',     arcColor: '#FF6B35',                         dotColor: '#FF6B35',                active: true,  done: false, offline: false };
+    return    { label: 'Heating',   arcColor: '#FF6B35',                          dotColor: '#FF6B35',                active: true,  done: false, offline: false };
   if (['done','finished','complete','end','ended'].includes(s))
-    return    { label: 'Done',      pillClass: 'ww-pill-done',     arcColor: 'var(--success-color,#1D9E75)',     dotColor: '#34C759',                active: false, done: true,  offline: false };
+    return    { label: 'Done',      arcColor: 'var(--success-color,#1D9E75)',     dotColor: '#34C759',                active: false, done: true,  offline: false };
   if (['paused','pause'].includes(s))
-    return    { label: 'Paused',    pillClass: 'ww-pill-paused',   arcColor: 'var(--warning-color,#BA7517)',     dotColor: '#FF9500',                active: false, done: false, offline: false };
+    return    { label: 'Paused',    arcColor: 'var(--warning-color,#BA7517)',     dotColor: '#FF9500',                active: false, done: false, offline: false };
   if (['error','fault','fail'].includes(s))
-    return    { label: 'Error',     pillClass: 'ww-pill-error',    arcColor: 'var(--error-color,#E24B4A)',       dotColor: '#FF3B30',                active: false, done: false, offline: false, error: true };
+    return    { label: 'Error',     arcColor: 'var(--error-color,#E24B4A)',       dotColor: '#FF3B30',                active: false, done: false, offline: false };
+
+  // Unknown string state — show it nicely but do NOT animate
   const fmt = raw.replace(/_/g,' ').replace(/\b\w/g, l => l.toUpperCase());
-  return      { label: fmt,         pillClass: 'ww-pill-washing',  arcColor: 'var(--info-color,#378ADD)',        dotColor: '#378ADD',                active: true,  done: false, offline: false };
+  return      { label: fmt,         arcColor: 'var(--divider-color)',             dotColor: 'rgba(255,255,255,0.35)', active: false, done: false, offline: false };
 }
 
 function isOfflineState(raw)  { return ['unavailable','unknown','offline',''].includes((raw||'').toLowerCase().trim()); }
@@ -439,17 +446,16 @@ class WalrusWasherCard extends HTMLElement {
     let remainMins = null;
     if (timeObj) { const n = parseFloat(timeObj.state); if (!isNaN(n)) remainMins = Math.max(0, n); }
 
-    // Arc offset: 0 = full ring, circ = empty ring
-    // Ring starts FULL when cycle begins (remainMins = maxMins → offset = 0)
-    // and drains to EMPTY as time runs out (remainMins = 0 → offset = circ)
+    // Arc: offset=0 → full ring, offset=circ → empty ring
+    // At start of cycle remainMins ≈ maxMins → fraction ≈ 1 → offset ≈ 0 (FULL)
+    // At end of cycle remainMins → 0          → fraction → 0 → offset → circ (EMPTY)
     const maxMins = parseFloat(cfg.max_cycle_minutes) || 90;
-    let arcOffset = circ; // default: empty (idle / offline / done)
+    let arcOffset = circ; // idle / offline / done → empty ring
     if (info.active && remainMins !== null) {
-      // remainMins/maxMins goes from 1.0 (just started, full) down to 0 (empty)
-      arcOffset = circ * (1 - Math.min(1, Math.max(0, remainMins / maxMins)));
+      const fraction = Math.min(1, Math.max(0, remainMins / maxMins));
+      arcOffset = circ * (1 - fraction); // full at start, drains to empty
     } else if (info.active) {
-      // Active but no time entity — show full ring until data arrives
-      arcOffset = 0;
+      arcOffset = 0; // active but no time entity → show full until data arrives
     }
 
     // Stop flash when plug reaches expected state

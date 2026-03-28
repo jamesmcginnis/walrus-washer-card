@@ -475,8 +475,11 @@ class WalrusWasherCard extends HTMLElement {
         const plugObj = hass.states[cfg.smart_plug_entity];
         const plugOn  = plugObj?.state === 'on';
 
-        // When plug is on but machine still unavailable, show Starting… not Offline
-        const displayLabel = (plugOn && info.offline) ? 'Starting…' : info.label;
+        // Plug off → machine is off, not idle
+        // Plug on + machine still unavailable → still starting up
+        const displayLabel = plugOn
+          ? (info.offline ? 'Starting…' : info.label)
+          : 'Off';
         if (pillTextEl) pillTextEl.textContent = displayLabel;
         if (dotEl)  dotEl.style.background     = plugOn ? '#34C759' : '#FF3B30';
         if (pillEl) pillEl.style.borderColor   = plugOn ? '#34C75966' : '#FF3B3066';

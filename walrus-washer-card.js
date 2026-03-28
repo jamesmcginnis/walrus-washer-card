@@ -470,17 +470,20 @@ class WalrusWasherCard extends HTMLElement {
       const pillEl     = root.getElementById('ww-pill');
       const dotEl      = root.getElementById('ww-pill-dot');
       const pillTextEl = root.getElementById('ww-pill-text');
-      if (pillTextEl) pillTextEl.textContent = info.label;
-      if (dotEl) {
-        if (cfg.smart_plug_enabled && cfg.smart_plug_entity) {
-          const plugObj = hass.states[cfg.smart_plug_entity];
-          const plugOn  = plugObj?.state === 'on';
-          dotEl.style.background = plugOn ? '#34C759' : '#FF3B30';
-          if (pillEl) pillEl.style.borderColor = plugOn ? '#34C75966' : '#FF3B3066';
-        } else {
-          dotEl.style.background = info.dotColor;
-          if (pillEl) pillEl.style.borderColor = `${info.dotColor}66`;
-        }
+
+      if (cfg.smart_plug_enabled && cfg.smart_plug_entity) {
+        const plugObj = hass.states[cfg.smart_plug_entity];
+        const plugOn  = plugObj?.state === 'on';
+
+        // When plug is on but machine still unavailable, show Starting… not Offline
+        const displayLabel = (plugOn && info.offline) ? 'Starting…' : info.label;
+        if (pillTextEl) pillTextEl.textContent = displayLabel;
+        if (dotEl)  dotEl.style.background     = plugOn ? '#34C759' : '#FF3B30';
+        if (pillEl) pillEl.style.borderColor   = plugOn ? '#34C75966' : '#FF3B3066';
+      } else {
+        if (pillTextEl) pillTextEl.textContent = info.label;
+        if (dotEl)  dotEl.style.background     = info.dotColor;
+        if (pillEl) pillEl.style.borderColor   = `${info.dotColor}66`;
       }
     }
 

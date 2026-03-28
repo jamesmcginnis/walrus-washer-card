@@ -6,12 +6,12 @@ A Home Assistant Dashboard card that shows your washing machine's cycle status a
 
 ## ✨ Features
 
-- **Animated progress ring** — starts full when a cycle begins and drains to empty as time runs out, driven by your remaining time sensor
+- **Animated progress ring** — starts full at the beginning of each cycle and drains to empty as time runs out; the maximum is tracked automatically so no configuration is needed
 - **Drum icon animation** — the washing machine icon spins only while the machine is actively running; completely still when idle or offline
 - **Status pill** — shows the current cycle phase (Washing, Rinsing, Spinning, Pre-wash, Heating, Paused, Done…) with a colour-coded dot
 - **Smart plug control** — link any switch or plug entity; tap the pill to turn the machine on or off
-  - **Green dot** = plug is on · **Red dot** = plug is off
-  - Plug off → pill shows **Off** (not Idle)
+  - 🟢 Green dot = plug is on · 🔴 Red dot = plug is off
+  - Plug off → pill shows **Off**
   - Plug on + machine still booting → pill shows **Starting…**
   - Plug on → pill shows the live wash status
   - Tap when off → turns plug on immediately
@@ -63,7 +63,6 @@ status_entity: sensor.wash_cycle_status
 time_entity: sensor.wash_cycle_remaining_time
 friendly_name: Washing Machine
 show_name: true
-max_cycle_minutes: 90
 smart_plug_enabled: true
 smart_plug_entity: switch.washing_machine_plug
 ```
@@ -77,7 +76,6 @@ smart_plug_entity: switch.washing_machine_plug
 | `time_entity` | `string` | — | Sensor reporting minutes remaining (numeric) — drives the ring drain |
 | `friendly_name` | `string` | `"Washing Machine"` | Name shown in the card header |
 | `show_name` | `boolean` | `true` | Show or hide the friendly name |
-| `max_cycle_minutes` | `number` | `90` | Maximum cycle duration in minutes — ring is full at this value |
 | `smart_plug_enabled` | `boolean` | `false` | Enable smart plug control via the status pill |
 | `smart_plug_entity` | `string` | — | `switch.*` or `input_boolean.*` entity to control |
 

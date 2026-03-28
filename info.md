@@ -6,10 +6,10 @@ A Home Assistant Dashboard card that displays your washing machine's cycle statu
 
 ## ✨ What it does
 
-- **Animated progress ring** — starts full and drains to empty as the cycle runs down, driven by your remaining time sensor
+- **Animated progress ring** — starts full when a cycle begins and drains to empty as time runs out; the cycle length is tracked automatically, no setup needed
 - **Drum icon animation** — spins only while the machine is actively running; completely still when idle or offline
 - **Status pill** — shows the live cycle phase (Washing, Rinsing, Spinning, Pre-wash, Heating, Paused, Done…) with a colour-coded dot
-- **Smart plug control** — green dot = plug on, red dot = plug off; tap to turn on instantly or confirm before turning off
+- **Smart plug control** — 🟢 green dot = plug on, 🔴 red dot = plug off; tap to turn on instantly or confirm before turning off
   - Plug off → pill shows **Off**
   - Plug on + machine booting → pill shows **Starting…**
   - Plug on → pill shows the actual wash status
@@ -29,7 +29,6 @@ machine_entity: sensor.washing_machine
 status_entity: sensor.wash_cycle_status
 time_entity: sensor.wash_cycle_remaining_time
 friendly_name: Washing Machine
-max_cycle_minutes: 90
 smart_plug_enabled: true
 smart_plug_entity: switch.washing_machine_plug
 ```

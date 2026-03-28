@@ -1,0 +1,8 @@
+{
+  "name": "Walrus Washer Card",
+  "description": "Washing machine cycle progress card for Home Assistant — animated ring, phase-aware status pill, and remaining time display.",
+  "content_in_root": true,
+  "render_readme": true,
+  "filename": "walrus-washer-card.js",
+  "homeassistant": "2023.9.0"
+}

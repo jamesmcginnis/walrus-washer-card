@@ -117,28 +117,8 @@ const STYLES = `
   .ww-ring-wrap.is-done .ww-time-val {
     animation: ww-done-pulse 1.8s ease-in-out infinite;
   }
-  .ww-ring-wrap.is-error #ww-arc {
-    animation: ww-breathe 0.8s ease-in-out infinite;
-  }
 
-  /* ── Divider + footer ────────────────────────────────────────── */
-  .ww-divider {
-    height: 1px;
-    background: var(--divider-color, rgba(0,0,0,0.08));
-    margin: 0 12px;
-  }
-  .ww-footer {
-    display: flex; align-items: center; justify-content: center;
-    padding: 5px 12px 7px; gap: 6px; min-height: 26px;
-  }
-  .ww-footer-text {
-    font-size: 9px; font-weight: 600;
-    letter-spacing: 0.04em; text-transform: uppercase;
-    color: var(--secondary-text-color);
-  }
-  .ww-footer-dot {
-    width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0;
-  }
+
 `;
 
 // ═══════════════════════════════════════════════════════════════════
@@ -422,16 +402,6 @@ class WalrusWasherCard extends HTMLElement {
           </div>
         </div>
 
-        <!-- Divider -->
-        <div class="ww-divider"></div>
-
-        <!-- Footer: plug status or cycle hint -->
-        <div class="ww-footer">
-          <span class="ww-footer-dot" id="ww-foot-dot"
-            style="background:var(--secondary-text-color);opacity:0.3;"></span>
-          <span class="ww-footer-text" id="ww-foot-text">Tap ring for details</span>
-        </div>
-
       </ha-card>`;
 
     // ── Click handlers ──────────────────────────────────────────
@@ -470,29 +440,42 @@ class WalrusWasherCard extends HTMLElement {
     if (timeObj) { const n = parseFloat(timeObj.state); if (!isNaN(n)) remainMins = Math.max(0, n); }
 
     // Arc offset: 0 = full ring, circ = empty ring
-    // Ring starts full (when remain = max) and drains to empty (remain = 0)
+    // Ring starts FULL when cycle begins (remainMins = maxMins → offset = 0)
+    // and drains to EMPTY as time runs out (remainMins = 0 → offset = circ)
     const maxMins = parseFloat(cfg.max_cycle_minutes) || 90;
-    let arcOffset = circ; // default: empty (idle/offline)
-    if (info.done) {
-      arcOffset = circ;  // done: empty ring (cycle consumed)
-    } else if (info.active && remainMins !== null) {
-      arcOffset = circ * Math.min(1, remainMins / maxMins); // drain as time reduces
+    let arcOffset = circ; // default: empty (idle / offline / done)
+    if (info.active && remainMins !== null) {
+      // remainMins/maxMins goes from 1.0 (just started, full) down to 0 (empty)
+      arcOffset = circ * (1 - Math.min(1, Math.max(0, remainMins / maxMins)));
     } else if (info.active) {
-      arcOffset = circ * 0.2; // active but no time data — nearly empty as neutral
+      // Active but no time entity — show full ring until data arrives
+      arcOffset = 0;
     }
 
-    // Stop flash when expected state is reached
-    if (this._pillFlashState === 'on'  && info.active)               this._stopPillFlash();
-    if (this._pillFlashState === 'off' && !info.active && !info.done) this._stopPillFlash();
+    // Stop flash when plug reaches expected state
+    if (cfg.smart_plug_enabled && cfg.smart_plug_entity) {
+      const plugOn = hass.states[cfg.smart_plug_entity]?.state === 'on';
+      if (this._pillFlashState === 'on'  && plugOn)  this._stopPillFlash();
+      if (this._pillFlashState === 'off' && !plugOn) this._stopPillFlash();
+    }
 
-    // ── Pill — possum style: dot + border colour set via JS ──────
+    // ── Pill — text = wash status; dot = plug state (green/red) or phase colour ─
     if (!this._pillFlashState) {
       const pillEl     = root.getElementById('ww-pill');
       const dotEl      = root.getElementById('ww-pill-dot');
       const pillTextEl = root.getElementById('ww-pill-text');
-      if (pillTextEl) pillTextEl.textContent   = info.label;
-      if (dotEl)      dotEl.style.background   = info.dotColor;
-      if (pillEl)     pillEl.style.borderColor = `${info.dotColor}66`;
+      if (pillTextEl) pillTextEl.textContent = info.label;
+      if (dotEl) {
+        if (cfg.smart_plug_enabled && cfg.smart_plug_entity) {
+          const plugObj = hass.states[cfg.smart_plug_entity];
+          const plugOn  = plugObj?.state === 'on';
+          dotEl.style.background = plugOn ? '#34C759' : '#FF3B30';
+          if (pillEl) pillEl.style.borderColor = plugOn ? '#34C75966' : '#FF3B3066';
+        } else {
+          dotEl.style.background = info.dotColor;
+          if (pillEl) pillEl.style.borderColor = `${info.dotColor}66`;
+        }
+      }
     }
 
     // ── Arc ───────────────────────────────────────────────────────
@@ -507,7 +490,6 @@ class WalrusWasherCard extends HTMLElement {
     if (wrapEl) {
       wrapEl.classList.toggle('is-active', info.active);
       wrapEl.classList.toggle('is-done',   info.done);
-      wrapEl.classList.toggle('is-error',  !!info.error);
     }
 
     // ── Time display ──────────────────────────────────────────────
@@ -530,29 +512,6 @@ class WalrusWasherCard extends HTMLElement {
     const nameEl = root.getElementById('ww-name');
     if (nameEl && cfg.friendly_name) nameEl.textContent = cfg.friendly_name;
 
-    // ── Footer row ────────────────────────────────────────────────
-    const footDot  = root.getElementById('ww-foot-dot');
-    const footText = root.getElementById('ww-foot-text');
-    if (footDot && footText) {
-      if (cfg.smart_plug_enabled && cfg.smart_plug_entity) {
-        const plugObj  = hass.states[cfg.smart_plug_entity];
-        const plugOn   = plugObj?.state === 'on';
-        const plugName = plugObj?.attributes?.friendly_name || cfg.smart_plug_entity;
-        footDot.style.background = plugOn
-          ? 'var(--success-color, #1D9E75)' : 'var(--secondary-text-color)';
-        footDot.style.opacity    = '1';
-        footText.textContent     = plugOn ? `${plugName} On` : `${plugName} Off`;
-      } else if (info.active && remainMins !== null) {
-        const pct = Math.round(Math.min(100, ((maxMins - remainMins) / maxMins) * 100));
-        footDot.style.background = info.arcColor;
-        footDot.style.opacity    = '1';
-        footText.textContent     = `${pct}% complete`;
-      } else {
-        footDot.style.background = 'var(--secondary-text-color)';
-        footDot.style.opacity    = '0.3';
-        footText.textContent     = 'Tap ring for details';
-      }
-    }
   }
 
   // ── Pill click ─────────────────────────────────────────────────
@@ -562,19 +521,19 @@ class WalrusWasherCard extends HTMLElement {
     const hass   = this._hass;
     const plugId = cfg.smart_plug_entity;
 
+    // No plug configured — open info popup
     if (!cfg.smart_plug_enabled || !plugId) { this._openStatusPopup(); return; }
 
-    const machineObj = cfg.machine_entity ? hass?.states[cfg.machine_entity] : null;
-    const statusObj  = cfg.status_entity  ? hass?.states[cfg.status_entity]  : null;
-    const statusRaw  = statusObj?.state || machineObj?.state || '';
+    const plugObj = hass?.states[plugId];
+    const plugOn  = plugObj?.state === 'on';
 
-    if (isOfflineState(statusRaw)) {
-      hass.callService('homeassistant', 'turn_on', { entity_id: plugId });
-      this._startPillFlash('on');
-    } else if (isIdleState(statusRaw) || isDoneState(statusRaw)) {
+    if (plugOn) {
+      // Plug is on — ask before turning off
       this._openConfirmOffPopup();
     } else {
-      this._openStatusPopup();
+      // Plug is off — turn on immediately, no confirmation needed
+      hass.callService('homeassistant', 'turn_on', { entity_id: plugId });
+      this._startPillFlash('on');
     }
   }
 
@@ -780,7 +739,7 @@ class WalrusWasherCard extends HTMLElement {
     let remainMins = null;
     if (timeObj) { const n = parseFloat(timeObj.state); if (!isNaN(n)) remainMins = Math.max(0, n); }
     let arcOffset = circ;
-    if (info.active && remainMins !== null) arcOffset = circ * Math.min(1, remainMins / maxMins);
+    if (info.active && remainMins !== null) arcOffset = circ * (1 - Math.min(1, remainMins / maxMins));
 
     const hero = document.createElement('div');
     hero.style.cssText = 'display:flex;align-items:center;gap:14px;margin-bottom:16px;';
@@ -936,7 +895,7 @@ class WalrusWasherCardEditor extends HTMLElement {
       return { e, score };
     }).sort((a, b) => b.score - a.score || a.e.localeCompare(b.e));
 
-    // Auto-select best candidates
+    // Auto-select best candidates (plug scored but never forced — too risky to auto-switch)
     const autoSelect = (key, candidates) => {
       if (!cfg[key]) {
         const best = candidates.find(x => x.score > 0);
@@ -946,6 +905,7 @@ class WalrusWasherCardEditor extends HTMLElement {
     autoSelect('machine_entity', machineCandidates);
     autoSelect('status_entity',  statusCandidates);
     autoSelect('time_entity',    timeCandidates);
+    autoSelect('smart_plug_entity', plugCandidates);
 
     const machineOpts = this._buildOptions(machineCandidates, allEntities, cfg.machine_entity   || '');
     const statusOpts  = this._buildOptions(statusCandidates,  allSensors,  cfg.status_entity    || '');
@@ -1028,12 +988,12 @@ class WalrusWasherCardEditor extends HTMLElement {
               style="${cfg.smart_plug_enabled ? '' : 'display:none'}">
               <div class="select-row" style="border-top:1px solid rgba(128,128,128,0.08);">
                 <label for="smart_plug_entity">Plug / Switch</label>
-                <div class="hint">★ = likely plugs first · switches &amp; input booleans only</div>
+                <div class="hint">★ auto-detected · switches &amp; input booleans · green dot = on, red = off</div>
                 <input type="text" class="entity-search" id="plug_search" placeholder="Search switches…">
                 <select id="smart_plug_entity">${plugOpts}</select>
                 <div class="hint" style="margin-top:2px;">
-                  Offline pill → turns plug <strong>on</strong> &nbsp;·&nbsp;
-                  Idle/Done pill → asks before turning plug <strong>off</strong>
+                  Pill tap when <strong>off</strong> → turns plug on &nbsp;·&nbsp;
+                  Pill tap when <strong>on</strong> → asks before turning off
                 </div>
               </div>
             </div>

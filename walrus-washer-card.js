@@ -326,6 +326,7 @@ class WalrusWasherCard extends HTMLElement {
     this._popupOverlay      = null;
     this._pillFlashState    = null;
     this._pillFlashInterval = null;
+    this._cycleMax          = null; // highest remaining-time seen this cycle
   }
 
   static getConfigElement() { return document.createElement('walrus-washer-card-editor'); }
@@ -337,7 +338,6 @@ class WalrusWasherCard extends HTMLElement {
       time_entity:        '',
       friendly_name:      'Washing Machine',
       show_name:          true,
-      max_cycle_minutes:  90,
       smart_plug_enabled: false,
       smart_plug_entity:  '',
     };
@@ -446,16 +446,25 @@ class WalrusWasherCard extends HTMLElement {
     let remainMins = null;
     if (timeObj) { const n = parseFloat(timeObj.state); if (!isNaN(n)) remainMins = Math.max(0, n); }
 
-    // Arc: offset=0 → full ring, offset=circ → empty ring
-    // At start of cycle remainMins ≈ maxMins → fraction ≈ 1 → offset ≈ 0 (FULL)
-    // At end of cycle remainMins → 0          → fraction → 0 → offset → circ (EMPTY)
-    const maxMins = parseFloat(cfg.max_cycle_minutes) || 90;
-    let arcOffset = circ; // idle / offline / done → empty ring
+    // ── Dynamic cycle max tracking ────────────────────────────────
+    // Record the highest remaining-time reading seen while active —
+    // that becomes the denominator so the ring starts exactly full.
+    // Reset when the cycle ends or machine goes idle/offline.
     if (info.active && remainMins !== null) {
-      const fraction = Math.min(1, Math.max(0, remainMins / maxMins));
+      if (this._cycleMax === null || remainMins > this._cycleMax) {
+        this._cycleMax = remainMins;
+      }
+    } else {
+      this._cycleMax = null; // cycle over — reset for next run
+    }
+
+    // Arc: offset=0 → full ring, offset=circ → empty ring
+    let arcOffset = circ; // idle / offline / done → empty
+    if (info.active && remainMins !== null && this._cycleMax > 0) {
+      const fraction = Math.min(1, Math.max(0, remainMins / this._cycleMax));
       arcOffset = circ * (1 - fraction); // full at start, drains to empty
     } else if (info.active) {
-      arcOffset = 0; // active but no time entity → show full until data arrives
+      arcOffset = 0; // active but no time data yet → show full
     }
 
     // Stop flash when plug reaches expected state
@@ -745,13 +754,16 @@ class WalrusWasherCard extends HTMLElement {
     const popup = this._createPopupBase(name);
     if (!popup) return;
 
-    // Mini ring hero
-    const circ    = 2 * Math.PI * 24;
-    const maxMins = parseFloat(cfg.max_cycle_minutes) || 90;
+    // Mini ring hero — use the same dynamic max the main ring uses
+    const circ     = 2 * Math.PI * 24;
     let remainMins = null;
     if (timeObj) { const n = parseFloat(timeObj.state); if (!isNaN(n)) remainMins = Math.max(0, n); }
-    let arcOffset = circ;
-    if (info.active && remainMins !== null) arcOffset = circ * (1 - Math.min(1, remainMins / maxMins));
+    let arcOffset  = circ;
+    if (info.active && remainMins !== null && this._cycleMax > 0) {
+      arcOffset = circ * (1 - Math.min(1, Math.max(0, remainMins / this._cycleMax)));
+    } else if (info.active) {
+      arcOffset = 0;
+    }
 
     const hero = document.createElement('div');
     hero.style.cssText = 'display:flex;align-items:center;gap:14px;margin-bottom:16px;';
@@ -799,7 +811,6 @@ class WalrusWasherCard extends HTMLElement {
       const unit = timeObj.attributes?.unit_of_measurement || 'min';
       this._addInfoRow(table, 'Remaining', `${timeObj.state} ${unit}`);
     }
-    if (cfg.max_cycle_minutes) this._addInfoRow(table, 'Max Cycle',     `${cfg.max_cycle_minutes} min`);
     if (cfg.machine_entity)    this._addInfoRow(table, 'Machine Entity', cfg.machine_entity);
     if (cfg.status_entity)     this._addInfoRow(table, 'Status Entity',  cfg.status_entity);
     if (cfg.time_entity)       this._addInfoRow(table, 'Time Entity',    cfg.time_entity);
@@ -1012,19 +1023,6 @@ class WalrusWasherCardEditor extends HTMLElement {
           </div>
         </div>
 
-        <!-- Cycle Settings -->
-        <div>
-          <div class="section-title">Cycle Settings</div>
-          <div class="card-block">
-            <div class="text-row">
-              <label for="max_cycle_minutes">Maximum Cycle Duration (minutes)</label>
-              <div class="hint">Ring starts full at this value and drains as time reduces. Default: 90</div>
-              <input type="number" id="max_cycle_minutes" min="1" max="600"
-                value="${cfg.max_cycle_minutes ?? 90}" placeholder="90">
-            </div>
-          </div>
-        </div>
-
       </div>`;
 
     this._syncUI();
@@ -1048,7 +1046,6 @@ class WalrusWasherCardEditor extends HTMLElement {
     set('status_entity',     cfg.status_entity     || '');
     set('time_entity',       cfg.time_entity       || '');
     set('smart_plug_entity', cfg.smart_plug_entity || '');
-    set('max_cycle_minutes', cfg.max_cycle_minutes ?? 90);
     chk('show_name',          cfg.show_name !== false);
     chk('smart_plug_enabled', cfg.smart_plug_enabled === true);
   }
@@ -1069,8 +1066,6 @@ class WalrusWasherCardEditor extends HTMLElement {
       this._set('time_entity',    e.target.value));
     get('smart_plug_entity').addEventListener('change', e =>
       this._set('smart_plug_entity', e.target.value || null));
-    get('max_cycle_minutes').addEventListener('input', e =>
-      this._set('max_cycle_minutes', parseInt(e.target.value) || 90));
 
     get('show_name').addEventListener('change', e => {
       this._set('show_name', e.target.checked);

@@ -552,9 +552,8 @@ class WalrusWasherCard extends HTMLElement {
       // Plug is on — ask before turning off
       this._openConfirmOffPopup();
     } else {
-      // Plug is off — turn on immediately, no confirmation needed
-      hass.callService('homeassistant', 'turn_on', { entity_id: plugId });
-      this._startPillFlash('on');
+      // Plug is off — ask before turning on
+      this._openConfirmOnPopup();
     }
   }
 
@@ -659,6 +658,8 @@ class WalrusWasherCard extends HTMLElement {
       .ww-btn-cancel:hover { opacity:0.75; }
       .ww-btn-confirm { background:var(--error-color,#E24B4A);color:#fff; }
       .ww-btn-confirm:hover { opacity:0.86; }
+      .ww-btn-confirm-on { background:#34C759;color:#fff; }
+      .ww-btn-confirm-on:hover { opacity:0.86; }
     `;
     overlay.appendChild(style);
     overlay.addEventListener('click', e => { if (e.target === overlay) this._closePopup(); });
@@ -730,6 +731,53 @@ class WalrusWasherCard extends HTMLElement {
       if (cfg.smart_plug_entity && this._hass) {
         this._hass.callService('homeassistant', 'turn_off', { entity_id: cfg.smart_plug_entity });
         this._startPillFlash('off');
+      }
+    });
+
+    btns.appendChild(cancelBtn);
+    btns.appendChild(confirmBtn);
+    popup.appendChild(btns);
+  }
+
+  // ── Confirm on popup ───────────────────────────────────────────
+
+  _openConfirmOnPopup() {
+    const cfg  = this._config;
+    const name = cfg.friendly_name || 'your washing machine';
+    const popup = this._createPopupBase('Turn On');
+    if (!popup) return;
+
+    const body = document.createElement('div');
+    body.style.cssText = 'text-align:center;padding:6px 0 18px;';
+    body.innerHTML = `
+      <div style="font-size:42px;line-height:1;margin-bottom:12px;">🫧</div>
+      <div style="font-size:16px;font-weight:700;color:var(--primary-text-color);
+                  margin-bottom:8px;line-height:1.3;">Ready to start a wash?</div>
+      <div style="font-size:13px;color:var(--secondary-text-color);line-height:1.55;
+                  max-width:260px;margin:0 auto;">
+        Just checking — do you want to turn on
+        <strong style="color:var(--primary-text-color);">${name}</strong> now?
+      </div>`;
+    popup.appendChild(body);
+
+    const btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;gap:8px;';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className   = 'ww-btn ww-btn-cancel';
+    cancelBtn.textContent = 'Not yet';
+    cancelBtn.style.flex  = '1';
+    cancelBtn.addEventListener('click', () => this._closePopup());
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className   = 'ww-btn ww-btn-confirm-on';
+    confirmBtn.textContent = 'Turn On';
+    confirmBtn.style.flex  = '1';
+    confirmBtn.addEventListener('click', () => {
+      this._closePopup();
+      if (cfg.smart_plug_entity && this._hass) {
+        this._hass.callService('homeassistant', 'turn_on', { entity_id: cfg.smart_plug_entity });
+        this._startPillFlash('on');
       }
     });
 
